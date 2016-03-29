@@ -239,6 +239,11 @@ cloudflare: $(CREDENTIALS_FILE)
 	RC=$$? ; \
 	exit $$RC;
 
+letsencrypt: setup
+	ansible-playbook letsencrypt.yml -i $(INVENTORY) -e @$(VARS_FILE) -e outputdir=$(TEST_DIR) -v $(TEST_FLAGS) ; \
+	RC=$$? ; \
+	exit $$RC;
+
 $(CONSUL_RUNNING):
 
 consul:

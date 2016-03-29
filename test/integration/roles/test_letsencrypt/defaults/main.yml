@@ -1,0 +1,6 @@
+---
+account_key: "{{ output_dir }}/account.key"
+domain_key: "{{ output_dir }}/domain.key"
+domain_csr: "{{ output_dir }}/domain.csr"
+domain_crt: "{{ output_dir }}/domain.crt"
+cert_subject: "/C=US/ST=New York/L=New York/O=Ansible/OU=Ansible Testing/CN={{ ansible_fqdn }}"

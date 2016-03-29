@@ -1,0 +1,64 @@
+# test code for the letsencrypt module
+# (c) 2016, Michael Gruener <michael.gruener@chaosmoon.net>
+
+# This file is part of Ansible
+#
+# Ansible is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# Ansible is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
+
+#- name: clean out the output_dir
+#  shell: rm -rf {{ output_dir }}/*
+
+- name: create account key
+  command: openssl genrsa -out {{ account_key }} 4096
+  args:
+    creates: "{{ account_key }}"
+
+- name: create domain key
+  command: openssl genrsa -out {{ domain_key }} 4096
+  args:
+    creates: "{{ domain_key }}"
+
+- name: create single domain csr
+  command: openssl req -new -sha256 -key {{ domain_key }} -subj "{{ cert_subject }}" -out {{ domain_csr }}
+  args:  
+    creates: "{{ domain_csr }}"
+
+- name: start Let's Encrypt challenge
+  letsencrypt:
+    account_key: "{{ account_key }}"
+    csr: "{{ domain_csr }}"
+  register: letsencrypt
+
+- set_fact:
+    challenge_file: /var/www/html/{{ letsencrypt['result']['challenge_data'][ansible_fqdn]['http-01']['resource'] }}
+    challenge_value: "{{ letsencrypt['result']['challenge_data'][ansible_fqdn]['http-01']['resource_value'] }}"
+
+- debug:
+    var: letsencrypt
+
+- name: create challenge directory
+  file:
+    path: "{{ challenge_file|dirname }}"
+    state: directory
+
+- name: copy
+  copy:
+    dest: "{{ challenge_file }}"
+    content: "{{ challenge_value }}"
+
+- letsencrypt:
+    account_key: "{{ account_key }}"
+    csr: "{{ domain_csr }}"
+    dest: "{{ domain_crt }}"
+    data: "{{ letsencrypt }}"
