@@ -41,8 +41,8 @@
   register: letsencrypt
 
 - set_fact:
-    challenge_file: /var/www/html/{{ letsencrypt['result']['challenge_data'][ansible_fqdn]['http-01']['resource'] }}
-    challenge_value: "{{ letsencrypt['result']['challenge_data'][ansible_fqdn]['http-01']['resource_value'] }}"
+    challenge_file: /var/www/html/{{ letsencrypt['challenge_data'][ansible_fqdn]['http-01']['resource'] }}
+    challenge_value: "{{ letsencrypt['challenge_data'][ansible_fqdn]['http-01']['resource_value'] }}"
 
 - debug:
     var: letsencrypt
