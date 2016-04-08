@@ -24,41 +24,106 @@
   args:
     creates: "{{ account_key }}"
 
-- name: create domain key
-  command: openssl genrsa -out {{ domain_key }} 4096
+- name: create http-01 domain key
+  command: openssl genrsa -out {{ domain_key }}.http-01 4096
   args:
-    creates: "{{ domain_key }}"
+    creates: "{{ domain_key }}.http-01"
 
-- name: create single domain csr
-  command: openssl req -new -sha256 -key {{ domain_key }} -subj "{{ cert_subject }}" -out {{ domain_csr }}
+- name: create http-01 challenge single domain csr
+  command: openssl req -new -sha256 -key {{ domain_key }}.http-01 -subj "{{ cert_subject }}" -out {{ domain_csr }}.http-01
   args:  
-    creates: "{{ domain_csr }}"
+    creates: "{{ domain_csr }}.http-01"
 
-- name: start Let's Encrypt challenge
+- name: start Let's Encrypt http-01 challenge
   letsencrypt:
     account_key: "{{ account_key }}"
-    csr: "{{ domain_csr }}"
+    csr: "{{ domain_csr }}.http-01"
+    challenge: http-01
   register: letsencrypt
 
 - set_fact:
     challenge_file: /var/www/html/{{ letsencrypt['challenge_data'][ansible_fqdn]['http-01']['resource'] }}
     challenge_value: "{{ letsencrypt['challenge_data'][ansible_fqdn]['http-01']['resource_value'] }}"
 
-- debug:
-    var: letsencrypt
-
-- name: create challenge directory
+- name: create http-01 challenge directory
   file:
     path: "{{ challenge_file|dirname }}"
     state: directory
 
-- name: copy
+- name: create the http-01 challenge file
   copy:
     dest: "{{ challenge_file }}"
     content: "{{ challenge_value }}"
 
-- letsencrypt:
+- name: Finalize http-01 challenge
+  letsencrypt:
     account_key: "{{ account_key }}"
-    csr: "{{ domain_csr }}"
-    dest: "{{ domain_crt }}"
+    csr: "{{ domain_csr }}.http-01"
+    dest: "{{ domain_crt }}.http-01"
     data: "{{ letsencrypt }}"
+    challenge: http-01
+
+- name: delete http-01 challenge directory
+  file:
+    path: "{{ challenge_file|dirname }}"
+    state: absent
+
+- name: create dns-01 domain key
+  command: openssl genrsa -out {{ domain_key }}.dns-01 4096
+  args:
+    creates: "{{ domain_key }}.dns-01"
+
+- name: create dns-01 challenge single domain csr
+  command: openssl req -new -sha256 -key {{ domain_key }}.dns-01 -subj "{{ cert_subject }}" -out {{ domain_csr }}.dns-01
+  args:  
+    creates: "{{ domain_csr }}.dns-01"
+
+- name: start Let's Encrypt dns-01 challenge
+  letsencrypt:
+    account_key: "{{ account_key }}"
+    csr: "{{ domain_csr }}.dns-01"
+    challenge: dns-01
+  register: letsencrypt
+
+- set_fact:
+    challenge_record: "{{ letsencrypt['challenge_data'][domain_hostname]['dns-01']['resource'] }}.{{ domain_hostname }}"
+    challenge_value: "{{ letsencrypt['challenge_data'][ansible_fqdn]['dns-01']['resource_value'] }}"
+    challenge_zone: "{{ domain_hostname.split('.')[-2:]|join('.') }}"
+
+- name: create dns-01 challenge dns record
+  cloudflare_dns:
+    account_email: "{{ cloudflare_email }}"
+    account_api_token: "{{ cloudflare_api_token }}"
+    zone: "{{ challenge_zone }}"
+    record: "{{ challenge_record }}"
+    type: TXT
+    solo: true
+    value: "{{ challenge_value }}"
+    ttl: 120
+
+# try to avoid dns caching. If we try to query the record
+# before waiting for the new ttl to expire, we might hit
+# an older, much higher ttl and never receive a result
+# before our retry limit
+- name: waiting for 120 seconds (dns record ttl)
+  wait_for:
+    timeout: 120
+
+- name: Finalize dns-01 challenge
+  letsencrypt:
+    account_key: "{{ account_key }}"
+    csr: "{{ domain_csr }}.dns-01"
+    dest: "{{ domain_crt }}.dns-01"
+    data: "{{ letsencrypt }}"
+    challenge: dns-01
+
+- name: delete dns-01 challenge dns record
+  cloudflare_dns:
+    account_email: "{{ cloudflare_email }}"
+    account_api_token: "{{ cloudflare_api_token }}"
+    zone: "{{ challenge_zone }}"
+    record: "{{ challenge_record }}"
+    type: TXT
+    value: "{{ challenge_value }}"
+    ttl: 120
+    state: absent
