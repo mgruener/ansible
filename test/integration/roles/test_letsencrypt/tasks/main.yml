@@ -24,6 +24,8 @@
   args:
     creates: "{{ account_key }}"
 
+#####################################################
+#####################################################
 - name: create http-01 domain key
   command: openssl genrsa -out {{ domain_key }}.http-01 4096
   args:
@@ -31,19 +33,27 @@
 
 - name: create http-01 challenge single domain csr
   command: openssl req -new -sha256 -key {{ domain_key }}.http-01 -subj "{{ cert_subject }}" -out {{ domain_csr }}.http-01
-  args:  
+  args:
     creates: "{{ domain_csr }}.http-01"
 
 - name: start Let's Encrypt http-01 challenge
   letsencrypt:
     account_key: "{{ account_key }}"
     csr: "{{ domain_csr }}.http-01"
+    dest: "{{ domain_crt }}.http-01"
     challenge: http-01
   register: letsencrypt
 
+- name: Validate Let's Encrypt http-01 challenge
+  assert:
+    that:
+      - letsencrypt|success
+      - letsencrypt|changed
+      - letsencrypt['cert_days'] == -1
+
 - set_fact:
-    challenge_file: /var/www/html/{{ letsencrypt['challenge_data'][ansible_fqdn]['http-01']['resource'] }}
-    challenge_value: "{{ letsencrypt['challenge_data'][ansible_fqdn]['http-01']['resource_value'] }}"
+    challenge_file: /var/www/html/{{ letsencrypt['challenge_data'][domain_hostname]['http-01']['resource'] }}
+    challenge_value: "{{ letsencrypt['challenge_data'][domain_hostname]['http-01']['resource_value'] }}"
 
 - name: create http-01 challenge directory
   file:
@@ -72,14 +82,18 @@
 - name: Validate http-01 challenge certificate
   assert:
     that:
-      http_01_cert['stat']['exists']
-      letsencrypt['cert_days'] > -1
+      - http_01_cert['stat']['exists']
+      - letsencrypt|success
+      - letsencrypt|changed
+      - letsencrypt['cert_days'] > -1
 
 - name: delete http-01 challenge directory
   file:
     path: "{{ challenge_file|dirname }}"
     state: absent
 
+#####################################################
+#####################################################
 - name: create dns-01 domain key
   command: openssl genrsa -out {{ domain_key }}.dns-01 4096
   args:
@@ -87,19 +101,27 @@
 
 - name: create dns-01 challenge single domain csr
   command: openssl req -new -sha256 -key {{ domain_key }}.dns-01 -subj "{{ cert_subject }}" -out {{ domain_csr }}.dns-01
-  args:  
+  args:
     creates: "{{ domain_csr }}.dns-01"
 
 - name: start Let's Encrypt dns-01 challenge
   letsencrypt:
     account_key: "{{ account_key }}"
     csr: "{{ domain_csr }}.dns-01"
+    dest: "{{ domain_crt }}.dns-01"
     challenge: dns-01
   register: letsencrypt
 
+- name: Validate Let's Encrypt dns-01 challenge
+  assert:
+    that:
+      - letsencrypt|success
+      - letsencrypt|changed
+      - letsencrypt['cert_days'] == -1
+
 - set_fact:
     challenge_record: "{{ letsencrypt['challenge_data'][domain_hostname]['dns-01']['resource'] }}.{{ domain_hostname }}"
-    challenge_value: "{{ letsencrypt['challenge_data'][ansible_fqdn]['dns-01']['resource_value'] }}"
+    challenge_value: "{{ letsencrypt['challenge_data'][domain_hostname]['dns-01']['resource_value'] }}"
     challenge_zone: "{{ domain_hostname.split('.')[-2:]|join('.') }}"
 
 - name: create dns-01 challenge dns record
@@ -138,8 +160,10 @@
 - name: Validate dns-01 challenge certificate
   assert:
     that:
-      dns_01_cert['stat']['exists']
-      letsencrypt['cert_days'] > -1
+      - letsencrypt|success
+      - letsencrypt|changed
+      - dns_01_cert['stat']['exists']
+      - letsencrypt['cert_days'] > -1
 
 - name: delete dns-01 challenge dns record
   cloudflare_dns:
@@ -150,4 +174,95 @@
     type: TXT
     value: "{{ challenge_value }}"
     ttl: 120
+    state: absent
+
+#####################################################
+#####################################################
+- name: Create copy of curren http-01 challenge certificate
+  command: cp -a {{ domain_crt }}.http-01 {{ domain_crt }}.http-01.old
+  args:
+    creates: "{{ domain_crt }}.http-01.old"
+
+- name: Get file data of old http-01 challenge certificate
+  stat:
+    path: "{{ domain_crt }}.http-01.old"
+  register: http_01_cert_old
+
+- name: Get current http-01 challenge certificate data
+  letsencrypt:
+    account_key: "{{ account_key }}"
+    csr: "{{ domain_csr }}.http-01"
+    dest: "{{ domain_crt }}.http-01"
+    challenge: http-01
+    remaining_days: 1
+  register: letsencrypt
+
+- name: Validate http-01 challenge certificate
+  assert:
+    that:
+      - letsencrypt|success
+      - not letsencrypt|changed
+      - letsencrypt['cert_days'] > -1
+
+- name: create new http-01 challenge single domain csr
+  command: openssl req -new -sha256 -key {{ domain_key }}.http-01 -subj "{{ cert_subject }}" -out {{ domain_csr }}.http-01.02
+  args:
+    creates: "{{ domain_csr }}.http-01.02"
+
+- name: start Let's Encrypt http-01 challenge renewal
+  letsencrypt:
+    account_key: "{{ account_key }}"
+    csr: "{{ domain_csr }}.http-01.02"
+    dest: "{{ domain_crt }}.http-01"
+    challenge: http-01
+    remaining_days: 91
+  register: letsencrypt
+
+- name: Validate Let's Encrypt http-01 challenge renewal
+  assert:
+    that:
+      - letsencrypt|success
+      - letsencrypt|changed
+      - letsencrypt['cert_days'] > -1
+
+- set_fact:
+    challenge_file: /var/www/html/{{ letsencrypt['challenge_data'][domain_hostname]['http-01']['resource'] }}
+    challenge_value: "{{ letsencrypt['challenge_data'][domain_hostname]['http-01']['resource_value'] }}"
+
+- name: create http-01 challenge directory
+  file:
+    path: "{{ challenge_file|dirname }}"
+    state: directory
+
+- name: create the http-01 challenge file
+  copy:
+    dest: "{{ challenge_file }}"
+    content: "{{ challenge_value }}"
+
+- name: Finalize http-01 challenge renewal
+  letsencrypt:
+    account_key: "{{ account_key }}"
+    csr: "{{ domain_csr }}.http-01.02"
+    dest: "{{ domain_crt }}.http-01"
+    data: "{{ letsencrypt }}"
+    challenge: http-01
+    remaining_days: 91
+  register: letsencrypt
+
+- name: stat http-01 challenge renewal certificate file
+  stat:
+    path: "{{ domain_crt }}.http-01"
+  register: http_01_cert
+
+- name: Validate http-01 challenge renewal certificate
+  assert:
+    that:
+      - http_01_cert['stat']['exists']
+      - http_01_cert['stat']['mtime'] > http_01_cert_old['stat']['mtime']
+      - letsencrypt|changed
+      - letsencrypt['cert_days'] > -1
+
+- name: delete http-01 challenge directory
+  file:
+    path: "{{ challenge_file|dirname }}"
     state: absent
