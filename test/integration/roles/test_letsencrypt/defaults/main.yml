@@ -5,3 +5,4 @@ domain_csr: "{{ output_dir }}/domain.csr"
 domain_crt: "{{ output_dir }}/domain.crt"
 domain_hostname: "{{ ansible_fqdn }}"
 cert_subject: "/C=US/ST=New York/L=New York/O=Ansible/OU=Ansible Testing/CN={{ domain_hostname }}"
+test_dns_01: false

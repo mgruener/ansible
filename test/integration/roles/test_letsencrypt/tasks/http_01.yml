@@ -1,0 +1,83 @@
+# test code for the letsencrypt module
+# (c) 2016, Michael Gruener <michael.gruener@chaosmoon.net>
+
+# This file is part of Ansible
+#
+# Ansible is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# Ansible is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
+
+- name: create http-01 domain key
+  command: openssl genrsa -out {{ domain_key }}.http-01 4096
+  args:
+    creates: "{{ domain_key }}.http-01"
+
+- name: create http-01 challenge single domain csr
+  command: openssl req -new -sha256 -key {{ domain_key }}.http-01 -subj "{{ cert_subject }}" -out {{ domain_csr }}.http-01
+  args:
+    creates: "{{ domain_csr }}.http-01"
+
+- name: start Let's Encrypt http-01 challenge
+  letsencrypt:
+    account_key: "{{ account_key }}"
+    csr: "{{ domain_csr }}.http-01"
+    dest: "{{ domain_crt }}.http-01"
+    challenge: http-01
+  register: letsencrypt
+
+- name: Validate Let's Encrypt http-01 challenge
+  assert:
+    that:
+      - letsencrypt|success
+      - letsencrypt|changed
+      - letsencrypt['cert_days'] == -1
+
+- set_fact:
+    challenge_file: /var/www/html/{{ letsencrypt['challenge_data'][domain_hostname]['http-01']['resource'] }}
+    challenge_value: "{{ letsencrypt['challenge_data'][domain_hostname]['http-01']['resource_value'] }}"
+
+- name: create http-01 challenge directory
+  file:
+    path: "{{ challenge_file|dirname }}"
+    state: directory
+
+- name: create the http-01 challenge file
+  copy:
+    dest: "{{ challenge_file }}"
+    content: "{{ challenge_value }}"
+
+- name: Finalize http-01 challenge
+  letsencrypt:
+    account_key: "{{ account_key }}"
+    csr: "{{ domain_csr }}.http-01"
+    dest: "{{ domain_crt }}.http-01"
+    data: "{{ letsencrypt }}"
+    challenge: http-01
+  register: letsencrypt
+
+- name: stat http-01 challenge certificate file
+  stat:
+    path: "{{ domain_crt }}.http-01"
+  register: http_01_cert
+
+- name: Validate http-01 challenge certificate
+  assert:
+    that:
+      - http_01_cert['stat']['exists']
+      - letsencrypt|success
+      - letsencrypt|changed
+      - letsencrypt['cert_days'] > -1
+
+- name: delete http-01 challenge directory
+  file:
+    path: "{{ challenge_file|dirname }}"
+    state: absent

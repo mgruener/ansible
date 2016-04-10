@@ -1,0 +1,99 @@
+# test code for the letsencrypt module
+# (c) 2016, Michael Gruener <michael.gruener@chaosmoon.net>
+
+# This file is part of Ansible
+#
+# Ansible is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# Ansible is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
+
+- name: create dns-01 domain key
+  command: openssl genrsa -out {{ domain_key }}.dns-01 4096
+  args:
+    creates: "{{ domain_key }}.dns-01"
+
+- name: create dns-01 challenge single domain csr
+  command: openssl req -new -sha256 -key {{ domain_key }}.dns-01 -subj "{{ cert_subject }}" -out {{ domain_csr }}.dns-01
+  args:
+    creates: "{{ domain_csr }}.dns-01"
+
+- name: start Let's Encrypt dns-01 challenge
+  letsencrypt:
+    account_key: "{{ account_key }}"
+    csr: "{{ domain_csr }}.dns-01"
+    dest: "{{ domain_crt }}.dns-01"
+    challenge: dns-01
+  register: letsencrypt
+
+- name: Validate Let's Encrypt dns-01 challenge
+  assert:
+    that:
+      - letsencrypt|success
+      - letsencrypt|changed
+      - letsencrypt['cert_days'] == -1
+
+- set_fact:
+    challenge_record: "{{ letsencrypt['challenge_data'][domain_hostname]['dns-01']['resource'] }}.{{ domain_hostname }}"
+    challenge_value: "{{ letsencrypt['challenge_data'][domain_hostname]['dns-01']['resource_value'] }}"
+    challenge_zone: "{{ domain_hostname.split('.')[-2:]|join('.') }}"
+
+- name: create dns-01 challenge dns record
+  cloudflare_dns:
+    account_email: "{{ cloudflare_email }}"
+    account_api_token: "{{ cloudflare_api_token }}"
+    zone: "{{ challenge_zone }}"
+    record: "{{ challenge_record }}"
+    type: TXT
+    solo: true
+    value: "{{ challenge_value }}"
+    ttl: 120
+
+# try to avoid dns caching. If we try to query the record
+# before waiting for the new ttl to expire, we might hit
+# an older, much higher ttl and never receive a result
+# before our retry limit
+- name: waiting for 120 seconds (dns record ttl)
+  wait_for:
+    timeout: 120
+
+- name: Finalize dns-01 challenge
+  letsencrypt:
+    account_key: "{{ account_key }}"
+    csr: "{{ domain_csr }}.dns-01"
+    dest: "{{ domain_crt }}.dns-01"
+    data: "{{ letsencrypt }}"
+    challenge: dns-01
+  register: letsencrypt
+
+- name: stat dns-01 challenge certificate file
+  stat:
+    path: "{{ domain_crt }}.dns-01"
+  register: dns_01_cert
+
+- name: Validate dns-01 challenge certificate
+  assert:
+    that:
+      - letsencrypt|success
+      - letsencrypt|changed
+      - dns_01_cert['stat']['exists']
+      - letsencrypt['cert_days'] > -1
+
+- name: delete dns-01 challenge dns record
+  cloudflare_dns:
+    account_email: "{{ cloudflare_email }}"
+    account_api_token: "{{ cloudflare_api_token }}"
+    zone: "{{ challenge_zone }}"
+    record: "{{ challenge_record }}"
+    type: TXT
+    value: "{{ challenge_value }}"
+    ttl: 120
+    state: absent
