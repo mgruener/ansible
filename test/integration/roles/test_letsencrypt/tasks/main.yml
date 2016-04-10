@@ -62,6 +62,18 @@
     dest: "{{ domain_crt }}.http-01"
     data: "{{ letsencrypt }}"
     challenge: http-01
+  register: letsencrypt
+
+- name: stat http-01 challenge certificate file
+  stat:
+    path: "{{ domain_crt }}.http-01"
+  register: http_01_cert
+
+- name: Validate http-01 challenge certificate
+  assert:
+    that:
+      http_01_cert['stat']['exists']
+      letsencrypt['cert_days'] > -1
 
 - name: delete http-01 challenge directory
   file:
@@ -116,6 +128,18 @@
     dest: "{{ domain_crt }}.dns-01"
     data: "{{ letsencrypt }}"
     challenge: dns-01
+  register: letsencrypt
+
+- name: stat dns-01 challenge certificate file
+  stat:
+    path: "{{ domain_crt }}.dns-01"
+  register: dns_01_cert
+
+- name: Validate dns-01 challenge certificate
+  assert:
+    that:
+      dns_01_cert['stat']['exists']
+      letsencrypt['cert_days'] > -1
 
 - name: delete dns-01 challenge dns record
   cloudflare_dns:
